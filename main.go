@@ -10,7 +10,7 @@ import (
 	"gorm.io/gorm"
   "net/http"
 
-	"database/sql"
+	_"database/sql"
 	"encoding/gob"
 
 	"github.com/gorilla/sessions"
@@ -54,72 +54,16 @@ type User struct {
 
 
 //******* login機能 Userモデルの宣言********//
-var db *sql.DB
+var conn *gorm.DB
 
 var store = sessions.NewCookieStore([]byte("super-secret"))
 
+// cookie情報の漏洩対策 HttpOnly属性
 func init() {
 	store.Options.HttpOnly = true // since we are not accessing any cookies w/ JavaScript, set to true
 	store.Options.Secure = true   // requires secuire HTTPS connection
 	gob.Register(&User{})
 }
-
-
-func main() {
-	// まずはデータベースに接続する。(パスワードは各々異なる)
-	dsn := "host=localhost user=postgres password=Hach8686 dbname=test port=5432 sslmode=disable TimeZone=Asia/Tokyo"
-	conn, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
-	if err != nil {
-		// エラーでたらプロセス終了
-		log.Fatalf("Some error occured. Err: %s", err)
-	}
-
-	/*
-	 * APIサーバーの設定をする。
-	 * rはrouterの略で何のAPIを用意するかを定義する。
-	 * postpage　GET、/showpage　GET、/user　POST
-	 */
-
-	
-	// 最初に定義するやつ
-	r := gin.Default()
-
-	// ginに対して、使うHTMLのテンプレートがどこに置いてあるかを知らせる。
-	r.LoadHTMLGlob("temp/*")
-
-	// 用意していないエンドポイント以外を叩かれたら内部で/showpage　GETを叩いてデフォルトページを表示する様にする。
-	r.NoRoute(func(c *gin.Context) {
-		location := url.URL{Path: "/showpage"}
-		c.Redirect(http.StatusFound, location.RequestURI())
-	})
-
-
-
-	//************* signup/login 機能開始 **************//  
-
-	r.LoadHTMLGlob("temp/*.html")
-	var err error
-
-	// ?? 3306に繋ぐのはなぜ？？//
-	db, err = sql.Open("mysql", "root:super-secret-password@tcp(localhost:3306)/gin_db")
-	if err != nil {
-		panic(err.Error())
-	}
-	defer db.Close()
-
-	authRouter := r.Group("/user", auth)
-
-	r.GET("/", indexHandler)
-	r.GET("/login", loginGEThandler)
-	r.POST("/login", loginPOSThandler)
-
-	authRouter.GET("/profile", profileHandler)
-
-	err = r.Run("localhost:8080")
-	if err != nil {
-		log.Fatal(err)
-	}
-
 
 // auth middleware
 func auth(c *gin.Context) {
@@ -148,10 +92,11 @@ func loginGEThandler(c *gin.Context) {
 
 // loginPOSThandler verifies login credentials
 func loginPOSThandler(c *gin.Context) {
+	// var user User
 	var user User
 	user.Username = c.PostForm("username")
 	password := c.PostForm("password")
-	err := user.getUserByUsername()
+	err := getUserByUsername(c)
 	if err != nil {
 		fmt.Println("error selecting pswd_hash in db by Username, err:", err)
 		c.HTML(http.StatusUnauthorized, "login.html", gin.H{"message": "check username and password"})
@@ -185,21 +130,78 @@ func profileHandler(c *gin.Context) {
 	c.HTML(http.StatusOK, "profile.html", gin.H{"user": user})
 }
 
-func (u *User) getUserByUsername() error {
-	stmt := "SELECT * FROM users WHERE username = ?"
-	row := db.QueryRow(stmt, u.Username)
-	err := row.Scan(&u.ID, &u.Username, &u.Email, &u.pswdHash, &u.CreatedAt, &u.Active, &u.verHash, &u.timeout)
-	if err != nil {
-		fmt.Println("getUser() error selecting User, err:", err)
-		return err
+func getUserByUsername(c *gin.Context)[]User {
+	var records []User
+	dbc := conn.Raw("SELECT * FROM users WHERE username = ?").Scan(&records)
+
+	if dbc.Error != nil {
+		fmt.Print(dbc.Error)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
 	}
-	return nil
+	
+	return records
+
+}
+
+
+func main() {
+	// まずはデータベースに接続する。(パスワードは各々異なる)
+	dsn := "host=localhost user=postgres password=Hach8686 dbname=test port=5432 sslmode=disable TimeZone=Asia/Tokyo"
+	conn, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		// エラーでたらプロセス終了
+		log.Fatalf("Some error occured. Err: %s", err)
+	}
+
+	/*
+	 * APIサーバーの設定をする。
+	 * rはrouterの略で何のAPIを用意するかを定義する。
+	 * postpage　GET、/showpage　GET、/user　POST
+	 */	
+	// 最初に定義するやつ
+	r := gin.Default()
+
+	// ginに対して、使うHTMLのテンプレートがどこに置いてあるかを知らせる。
+	r.LoadHTMLGlob("temp/*")
+
+	// 用意していないエンドポイント以外を叩かれたら内部で/showpage　GETを叩いてデフォルトページを表示する様にする。
+	r.NoRoute(func(c *gin.Context) {
+		location := url.URL{Path: "/showpage"}
+		c.Redirect(http.StatusFound, location.RequestURI())
+	})
+
+
+	r.LoadHTMLGlob("temp/*.html")
+
+	// ?? 3306に繋ぐのはなぜ？？//
+	// db, err = sql.Open("mysql", "root:super-secret-password@tcp(localhost:3306)/gin_db")
+	// db, err = gorm.Open(postgres.Open(db), &gorm.Config{})
+
+	// db := "host=localhost user=postgres password=Hach8686 dbname=test port=5432 sslmode=disable TimeZone=Asia/Tokyo"
+	// conn, err := gorm.Open(postgres.Open(db), &gorm.Config{})
+
+
+	if err != nil {
+		panic(err.Error())
+	}
+	// defer db.Close()
+
+	authRouter := r.Group("/user", auth)
+
+	r.GET("/", indexHandler)
+	r.GET("/login", loginGEThandler)
+	r.POST("/login", loginPOSThandler)
+
+	authRouter.GET("/profile", profileHandler)
+
+	err = r.Run("localhost:8080")
+	if err != nil {
+		log.Fatal(err)
+	}
 
 
   // ************login 機能終了***********************//
-
-
-
 
 	// POST用のページ（post.html）を返す。
 	// c.HTMLというのはこのAPIのレスポンスとしてHTMLファイルを返すよ、という意味
@@ -340,5 +342,4 @@ func (u *User) getUserByUsername() error {
 	// r.POST( や　r.GET(　等の関数はAPIが呼ばれる度に実行される。
 	r.Run()
 
-}
 }
