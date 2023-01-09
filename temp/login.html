@@ -1,31 +1,20 @@
 <!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta http-equiv="X-UA-Compatible" content="IE=edge">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Login</title>
-</head>
+<html>
 <body>
 
-<!-- <a href="http://localhost:8080/showpage">Result pageへ</a> -->
-<!-- <form action="http://localhost:8080/book" method="post"> -->
+<h2>Login</h2><br>
 
-<table>
-<tr>
-  <th><p>会社名</p></th>
-  <th><p>名前</p></th>
-  <th><p>Email</p></th>
-</tr>
+{{if .message}}
+    <h5>{{.message}}</h5>
+{{end}}
 
-<tr>
-  <td> <p><input type="text" name="Company" size="20"></p></td>
-  <td> <p><input type="text" name="Name" size="20"></p></td>
-  <td><p><input type="text" name="Email" size="20"></p></td>
-</tr>
-
-</table>
-
+<form action="/login" method="POST">
+    <label for="username">Name:</label><br>
+    <input type="text" id="username" name="username"><br>
+    <label for="password">Password:</label><br>
+    <input type="password" id="password" name="password"><br><br>
+    <input type="submit" value="Submit">
+</form> 
 
 </body>
 </html>
