@@ -5,18 +5,26 @@ import (
 	"log"
 	"net/url"
 
+	"net/http"
+	_"crypto/sha256"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-  "net/http"
 
-	_"database/sql"
+	_ "database/sql"
 	"encoding/gob"
 
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/sessions"
 	"golang.org/x/crypto/bcrypt"
-	_ "github.com/go-sql-driver/mysql"
 )
+
+// HTMLからリクエスト来た時にGo内でそのデータが受け取れるようにこのStructを用意する。
+type LoginUser struct {
+	Name string
+	Hash string
+}
 
 // HTMLからリクエスト来た時にGo内でそのデータが受け取れるようにこのStructを用意する。
 type Bookmark struct {
@@ -31,7 +39,7 @@ type BookmarkJson struct {
 	Comment string `json:"Comment"`
 }
 
-// booklistテーブルと同じ構造。
+
 type Record struct {
 	ID       int
 	Bookname string
@@ -52,9 +60,20 @@ type User struct {
 	timeout   string
 }
 
+//**hash化**//
+// func hash(){
+// 	s := "www"
+// 	h := sha256.New()
+// 	h.Write([]byte(s))
+// 	bs := h.Sum(nil)
+// 	fmt.Println(s)
+//   fmt.Printf("%x\n", bs)
+// }
 
-//******* login機能 Userモデルの宣言********//
+
+// ******* login機能 Userモデルの宣言********//
 var conn *gorm.DB
+var err error
 
 var store = sessions.NewCookieStore([]byte("super-secret"))
 
@@ -96,24 +115,25 @@ func loginPOSThandler(c *gin.Context) {
 	var user User
 	user.Username = c.PostForm("username")
 	password := c.PostForm("password")
-	err := getUserByUsername(c)
-	if err != nil {
-		fmt.Println("error selecting pswd_hash in db by Username, err:", err)
+	flag, hash := getUserByUsername(c, user.Username)
+	if flag != true {
+		fmt.Println("error selecting pswd_hash in db by Username")
 		c.HTML(http.StatusUnauthorized, "login.html", gin.H{"message": "check username and password"})
 		return
 	}
-	err = bcrypt.CompareHashAndPassword([]byte(user.pswdHash), []byte(password))
-	fmt.Println("err from bycrypt:", err)
-	if err == nil {
-		session, _ := store.Get(c.Request, "session")
-		// session struct has field Values map[interface{}]interface{}
-		session.Values["user"] = user
-		// save before writing to response/return from handler
-		session.Save(c.Request, c.Writer)
-		c.HTML(http.StatusOK, "loggedin.html", gin.H{"username": user.Username})
+	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	if err != nil {
+		fmt.Println("err from bycrypt:", err)
+		c.HTML(http.StatusUnauthorized, "login.html", gin.H{"message": "check username and password"})
 		return
 	}
-	c.HTML(http.StatusUnauthorized, "login.html", gin.H{"message": "check username and password"})
+	session, _ := store.Get(c.Request, "session")
+	// session struct has field Values map[interface{}]interface{}
+	session.Values["user"] = user
+	// save before writing to response/return from handler
+	session.Save(c.Request, c.Writer)
+	c.HTML(http.StatusOK, "loggedin.html", gin.H{"username": user.Username})
+	return
 }
 
 // profileHandler displays profile information
@@ -130,25 +150,27 @@ func profileHandler(c *gin.Context) {
 	c.HTML(http.StatusOK, "profile.html", gin.H{"user": user})
 }
 
-func getUserByUsername(c *gin.Context)[]User {
-	var records []User
-	dbc := conn.Raw("SELECT * FROM users WHERE username = ?").Scan(&records)
+func getUserByUsername(c *gin.Context, name string) (bool, string) {
+	var records []LoginUser
+	dbc := conn.Raw("SELECT * FROM users WHERE name = ?", name).Scan(&records)
 
 	if dbc.Error != nil {
 		fmt.Print(dbc.Error)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
-		return
+		return false, ""
 	}
-	
-	return records
 
+	if len(records) == 0 {
+		// no user data
+		return false, ""
+	}
+	return true, records[0].Hash
 }
-
 
 func main() {
 	// まずはデータベースに接続する。(パスワードは各々異なる)
 	dsn := "host=localhost user=postgres password=Hach8686 dbname=test port=5432 sslmode=disable TimeZone=Asia/Tokyo"
-	conn, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	conn, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
 		// エラーでたらプロセス終了
 		log.Fatalf("Some error occured. Err: %s", err)
@@ -158,7 +180,7 @@ func main() {
 	 * APIサーバーの設定をする。
 	 * rはrouterの略で何のAPIを用意するかを定義する。
 	 * postpage　GET、/showpage　GET、/user　POST
-	 */	
+	 */
 	// 最初に定義するやつ
 	r := gin.Default()
 
@@ -171,7 +193,6 @@ func main() {
 		c.Redirect(http.StatusFound, location.RequestURI())
 	})
 
-
 	r.LoadHTMLGlob("temp/*.html")
 
 	// ?? 3306に繋ぐのはなぜ？？//
@@ -180,7 +201,6 @@ func main() {
 
 	// db := "host=localhost user=postgres password=Hach8686 dbname=test port=5432 sslmode=disable TimeZone=Asia/Tokyo"
 	// conn, err := gorm.Open(postgres.Open(db), &gorm.Config{})
-
 
 	if err != nil {
 		panic(err.Error())
@@ -195,13 +215,12 @@ func main() {
 
 	authRouter.GET("/profile", profileHandler)
 
-	err = r.Run("localhost:8080")
-	if err != nil {
-		log.Fatal(err)
-	}
+	// err = r.Run("localhost:8080")
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
 
-
-  // ************login 機能終了***********************//
+	// ************login 機能終了***********************//
 
 	// POST用のページ（post.html）を返す。
 	// c.HTMLというのはこのAPIのレスポンスとしてHTMLファイルを返すよ、という意味
@@ -211,6 +230,17 @@ func main() {
 
 	// 結果を表示するページを返す。
 	r.GET("/showpage", func(c *gin.Context) {
+		
+			session, _ := store.Get(c.Request, "session")
+			// var usertruct = &User{}
+			val := session.Values["user"]
+			var ok bool
+			if _, ok = val.(*User); !ok {
+				fmt.Println("was not of type *User")
+				c.HTML(http.StatusForbidden, "login.html", nil)
+				return
+			}		
+
 		var records []Record
 		// &recordsをDBに渡して、取得したデータを割り付ける。
 		dbc := conn.Raw("SELECT id, bookname,url,comment,to_char(time,'YYYY-MM-DD HH24:MI:SS') AS time FROM booklist ORDER BY id").Scan(&records)
